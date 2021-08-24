@@ -390,7 +390,7 @@
 
       {{ range $k, $v := $v.type }}
       {{ with $v.default }}
-      <span>
+      <span {{ with $v.examples }}class="block mb-4"{{ end }}>
         Default: <code>{{ . }}</code>
       </span>
       {{ end }}
