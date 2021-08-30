@@ -3,9 +3,9 @@ use super::api;
 #[cfg(feature = "datadog-pipelines")]
 use super::datadog;
 use super::{
-    compiler, provider, ComponentId, Config, EnrichmentTableConfig, EnrichmentTableOuter,
-    HealthcheckOptions, SinkConfig, SinkOuter, SourceConfig, SourceOuter, TestDefinition,
-    TransformOuter,
+    compiler, pipeline::Pipelines, provider, ComponentId, Config, EnrichmentTableConfig,
+    EnrichmentTableOuter, HealthcheckOptions, SinkConfig, SinkOuter, SourceConfig, SourceOuter,
+    TestDefinition, TransformOuter,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,8 @@ pub struct ConfigBuilder {
     #[serde(default)]
     pub tests: Vec<TestDefinition>,
     pub provider: Option<Box<dyn provider::ProviderConfig>>,
+    #[serde(default)]
+    pub pipelines: Pipelines,
 }
 
 impl Clone for ConfigBuilder {
@@ -64,6 +66,7 @@ impl From<Config> for ConfigBuilder {
             transforms: c.transforms,
             provider: None,
             tests: c.tests,
+            pipelines: c.pipelines,
         }
     }
 }
@@ -130,6 +133,10 @@ impl ConfigBuilder {
             .insert(ComponentId::from(id.into()), transform);
     }
 
+    pub fn set_pipelines(&mut self, pipelines: Pipelines) {
+        self.pipelines = pipelines;
+    }
+
     pub fn append(&mut self, with: Self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
@@ -144,6 +151,20 @@ impl ConfigBuilder {
         }
 
         self.provider = with.provider;
+
+        if self.global.proxy.http.is_some() && with.global.proxy.http.is_some() {
+            errors.push("conflicting values for 'proxy.http' found".to_owned());
+        }
+
+        if self.global.proxy.https.is_some() && with.global.proxy.https.is_some() {
+            errors.push("conflicting values for 'proxy.https' found".to_owned());
+        }
+
+        if !self.global.proxy.no_proxy.is_empty() && !with.global.proxy.no_proxy.is_empty() {
+            errors.push("conflicting values for 'proxy.no_proxy' found".to_owned());
+        }
+
+        self.global.proxy = self.global.proxy.merge(&with.global.proxy);
 
         if self.global.data_dir.is_none() || self.global.data_dir == default_data_dir() {
             self.global.data_dir = with.global.data_dir;

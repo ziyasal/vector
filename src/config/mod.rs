@@ -29,6 +29,7 @@ mod diff;
 pub mod format;
 mod id;
 mod loading;
+mod pipeline;
 pub mod provider;
 mod unit_test;
 mod validation;
@@ -41,7 +42,7 @@ pub use format::{Format, FormatHint};
 pub use id::ComponentId;
 pub use loading::{
     load, load_builder_from_paths, load_from_paths, load_from_paths_with_provider, load_from_str,
-    merge_path_lists, process_paths, CONFIG_PATHS,
+    load_pipelines_from_paths, merge_path_lists, process_paths, CONFIG_PATHS,
 };
 pub use unit_test::build_unit_tests_main as build_unit_tests;
 pub use validation::warnings;
@@ -77,6 +78,19 @@ impl<'a> From<&'a ConfigPath> for &'a PathBuf {
     }
 }
 
+impl ConfigPath {
+    pub fn as_dir(&self) -> Option<&PathBuf> {
+        match self {
+            Self::Dir(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    pub fn pipeline_dir(&self) -> Option<PathBuf> {
+        self.as_dir().map(|path| path.join("pipelines"))
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Config {
     pub global: GlobalOptions,
@@ -89,6 +103,7 @@ pub struct Config {
     pub sinks: IndexMap<ComponentId, SinkOuter>,
     pub transforms: IndexMap<ComponentId, TransformOuter>,
     pub enrichment_tables: IndexMap<ComponentId, EnrichmentTableOuter>,
+    pub pipelines: IndexMap<String, pipeline::Pipeline>,
     tests: Vec<TestDefinition>,
     expansions: IndexMap<ComponentId, Vec<ComponentId>>,
 }
@@ -581,6 +596,7 @@ mod test {
                   encoding = "json"
             "#},
             Some(Format::Toml),
+            Default::default(),
         )
         .unwrap();
 
@@ -604,6 +620,7 @@ mod test {
                   encoding = "json"
             "#},
             Some(Format::Toml),
+            Default::default(),
         )
         .unwrap();
 
@@ -637,6 +654,7 @@ mod test {
                   encoding = "json"
             "#},
             Some(Format::Toml),
+            Default::default(),
         )
         .unwrap();
 
@@ -668,6 +686,9 @@ mod test {
                     indoc! {r#"
                         data_dir = "/foobar"
 
+                        [proxy]
+                          http = "http://proxy.inc:3128"
+
                         [transforms.foo]
                           type = "json_parser"
                           inputs = [ "in" ]
@@ -691,6 +712,8 @@ mod test {
             Ok(())
         );
 
+        assert!(config.global.proxy.http.is_some());
+        assert!(config.global.proxy.https.is_none());
         assert_eq!(Some(PathBuf::from("/foobar")), config.global.data_dir);
         assert!(config.sources.contains_key(&ComponentId::from("in")));
         assert!(config.sinks.contains_key(&ComponentId::from("out")));
@@ -770,6 +793,38 @@ mod test {
         assert_eq!(config.global.proxy.http, Some("http://server:3128".into()));
         assert_eq!(config.global.proxy.https, Some("http://other:3128".into()));
         assert!(config.global.proxy.no_proxy.matches("localhost"));
+        let source = config.sources.get(&ComponentId::from("in")).unwrap();
+        assert_eq!(source.proxy.http, Some("http://server:3128".into()));
+        assert_eq!(source.proxy.https, Some("http://other:3128".into()));
+        assert!(source.proxy.no_proxy.matches("localhost"));
+    }
+
+    #[test]
+    fn with_partial_proxy() {
+        let config: ConfigBuilder = format::deserialize(
+            indoc! {r#"
+                [proxy]
+                  http = "http://server:3128"
+
+                [sources.in]
+                  type = "nginx_metrics"
+                  endpoints = ["http://localhost:8000/basic_status"]
+
+                [sources.in.proxy]
+                  http = "http://server:3128"
+                  https = "http://other:3128"
+                  no_proxy = ["localhost", "127.0.0.1"]
+
+                [sinks.out]
+                  type = "console"
+                  inputs = ["in"]
+                  encoding = "json"
+            "#},
+            Some(Format::Toml),
+        )
+        .unwrap();
+        assert_eq!(config.global.proxy.http, Some("http://server:3128".into()));
+        assert_eq!(config.global.proxy.https, None);
         let source = config.sources.get(&ComponentId::from("in")).unwrap();
         assert_eq!(source.proxy.http, Some("http://server:3128".into()));
         assert_eq!(source.proxy.https, Some("http://other:3128".into()));
@@ -910,6 +965,7 @@ mod resource_tests {
                   encoding = "json"
             "#},
             Some(Format::Toml),
+            Default::default(),
         )
         .is_err());
     }
