@@ -1,6 +1,4 @@
 use crate::config::GlobalOptions;
-#[cfg(feature = "vrl")]
-use crate::enrichment;
 use async_trait::async_trait;
 use indexmap::IndexMap;
 
@@ -31,6 +29,9 @@ pub struct TransformContext {
 }
 
 impl TransformContext {
+    // clippy allow avoids an issue where vrl is flagged off and `globals` is
+    // the sole field in the struct
+    #[allow(clippy::needless_update)]
     pub fn new_with_globals(globals: GlobalOptions) -> Self {
         Self {
             globals,
@@ -48,6 +49,10 @@ pub trait TransformConfig: core::fmt::Debug + Send + Sync + dyn_clone::DynClone 
     fn input_type(&self) -> DataType;
 
     fn output_type(&self) -> DataType;
+
+    fn named_outputs(&self) -> Vec<String> {
+        Vec::new()
+    }
 
     fn transform_type(&self) -> &'static str;
 
