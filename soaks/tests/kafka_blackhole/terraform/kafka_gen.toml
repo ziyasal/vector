@@ -1,0 +1,10 @@
+worker_threads = 2
+prometheus_addr = "0.0.0.0:9090"
+
+[targets.kafka]
+bootstrap_server = "bootstrap.kafka.svc.cluster.local:9092"
+topic = "logs-soak"
+variant = "Json"
+throughput.type = "BytesPerSecond"
+throughput.amount = "100 Mb"
+maximum_prebuild_cache_size_bytes = "1000 Mb"
