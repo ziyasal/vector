@@ -1,0 +1,21 @@
+data_dir = "/tmp/vector/github-10806"
+
+[sources.journal]
+type = "journald"
+batch_size = 1
+current_boot_only = false
+acknowledgements.enabled = false
+
+[sinks.loki]
+type = "loki"
+inputs = ["journal"]
+endpoint = "http://localhost:1234"
+labels.app = "{{src.app}}"
+labels.file = "{{src.file}}"
+labels.host = "{{src.host}}"
+labels.src = "{{src.type}}"
+encoding.codec = "json"
+batch.timeout_secs = 1
+out_of_order_action = "rewrite_timestamp"
+buffer.type = "disk"
+buffer.max_size = 104900000
