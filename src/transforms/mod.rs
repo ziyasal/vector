@@ -1,5 +1,6 @@
 use snafu::Snafu;
 
+pub mod datadog_sensitive_data_scanner;
 #[cfg(feature = "transforms-add_fields")]
 pub mod add_fields;
 #[cfg(feature = "transforms-add_tags")]
