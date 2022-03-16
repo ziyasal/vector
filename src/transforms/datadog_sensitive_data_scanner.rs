@@ -49,15 +49,34 @@ impl ScanningRule {
         match event {
             Event::Log(log) => match &self.coverage {
                 ScanningCoverage::Include(attributes) => {
+                    let mut inserted_tags = false;
                     for attribute in attributes {
                         if let Some(value) = log.get_mut(attribute.as_str()) {
-                            if self.scan_nested(value) {
+                            let scanned = self.scan_nested(value);
+                            if !inserted_tags && scanned {
+                                inserted_tags = true;
                                 self.insert_tags(log);
                             }
                         }
                     }
                 }
-                ScanningCoverage::Exclude(attributes) => {}
+                ScanningCoverage::Exclude(attributes) => {
+                    let mut inserted_tags = false;
+                    println!("{:?}", log.keys().collect::<Vec<_>>());
+                    let lookups = log
+                        .keys()
+                        .filter(|k| !attributes.iter().any(|attribute| k.starts_with(attribute)))
+                        .collect::<Vec<_>>();
+                    for lookup in lookups {
+                        if let Some(value) = log.get_mut(lookup.as_str()) {
+                            let scanned = self.scan_nested(value);
+                            if !inserted_tags && scanned {
+                                inserted_tags = true;
+                                self.insert_tags(log);
+                            }
+                        }
+                    }
+                }
             },
             _ => unimplemented!("Only log events can be scanned"),
         }
@@ -147,7 +166,7 @@ fn build_filter(s: &'static str) -> Condition {
 #[async_trait::async_trait]
 #[typetag::serde(name = "datadog_sensitive_data_scanner")]
 impl TransformConfig for DatadogSensitiveDataScannerConfig {
-    async fn build(&self, context: &TransformContext) -> crate::Result<Transform> {
+    async fn build(&self, _context: &TransformContext) -> crate::Result<Transform> {
         let amex_rule = ScanningRule {
             id: "amex rule".to_string(),
             pattern: Regex::new(r"").unwrap(),
@@ -163,8 +182,7 @@ impl TransformConfig for DatadogSensitiveDataScannerConfig {
             pattern: Regex::new(r"hello").unwrap(),
             coverage: ScanningCoverage::Include(vec!["message".to_string()]),
             tags: build_tags("sensitive_data_category:credentials,sensitive_data:stripe_api_key"),
-            // action: Action::Scrub("REDACT".to_string()),
-            action: Action::Hash,
+            action: Action::Scrub("REDACT".to_string()),
         };
 
         let scanning_rules = vec![amex_rule, stripe_api_rule];
@@ -317,6 +335,60 @@ mod test {
 
         let event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "goodbye", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "object": { "key": "value" }, "string": "bar" }"#).unwrap());
         let scanned_event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "goodbye", "match": { "here": "REDACTED world" } }, "boolean": true, "number": 47.5, "object": { "key": "value" }, "string": "bar" }"#).unwrap());
+
+        let result = transform_one(&mut scanner, event).unwrap();
+        assert_eq!(scanned_event, result);
+    }
+
+    #[test]
+    fn hash_excludes_nested() {
+        let rule = ScanningRule {
+            id: "foo".to_string(),
+            pattern: Regex::new(r"hello").unwrap(),
+            coverage: ScanningCoverage::Exclude(vec!["namespace".to_string()]),
+            tags: build_tags(""),
+            action: Action::Hash,
+        };
+
+        let scanning_rules = vec![rule];
+
+        let scanning_groups = vec![ScanningGroup {
+            id: "group".to_string(),
+            filter: build_filter("*"),
+            scanning_rules,
+        }];
+
+        let mut scanner = DatadogSensitiveDataScanner::new(scanning_groups);
+
+        let event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "hello", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "message": "hello" }"#).unwrap());
+        let scanned_event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "hello", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "message": "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a" }"#).unwrap());
+
+        let result = transform_one(&mut scanner, event).unwrap();
+        assert_eq!(scanned_event, result);
+    }
+
+    #[test]
+    fn scrub_excludes_nested() {
+        let rule = ScanningRule {
+            id: "foo".to_string(),
+            pattern: Regex::new(r"hello").unwrap(),
+            coverage: ScanningCoverage::Exclude(vec!["non-existent".to_string()]),
+            tags: build_tags("test:tag"),
+            action: Action::Scrub("REDACTED".to_string()),
+        };
+
+        let scanning_rules = vec![rule];
+
+        let scanning_groups = vec![ScanningGroup {
+            id: "group".to_string(),
+            filter: build_filter("*"),
+            scanning_rules,
+        }];
+
+        let mut scanner = DatadogSensitiveDataScanner::new(scanning_groups);
+
+        let event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "hello", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "message": "hello" }"#).unwrap());
+        let scanned_event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "REDACTED", "match": { "here": "REDACTED world" } }, "boolean": true, "number": 47.5, "message": "REDACTED", "test": "tag" }"#).unwrap());
 
         let result = transform_one(&mut scanner, event).unwrap();
         assert_eq!(scanned_event, result);
