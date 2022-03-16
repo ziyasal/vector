@@ -1,5 +1,8 @@
 use snafu::Snafu;
 
+#[cfg(feature = "datadog-pipelines")]
+pub mod datadog_sensitive_data_scanner;
+
 #[cfg(feature = "transforms-add_fields")]
 pub mod add_fields;
 #[cfg(feature = "transforms-add_tags")]
@@ -18,7 +21,6 @@ pub mod coercer;
 pub mod compound;
 #[cfg(feature = "transforms-concat")]
 pub mod concat;
-pub mod datadog_sensitive_data_scanner;
 #[cfg(feature = "transforms-dedupe")]
 pub mod dedupe;
 #[cfg(feature = "transforms-field_filter")]

@@ -6875,6 +6875,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha3"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "881bf8156c87b6301fc5ca6b27f11eeb2761224c7081e69b409d5a1951a70c86"
+dependencies = [
+ "digest 0.10.3",
+ "keccak",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8619,6 +8629,7 @@ dependencies = [
  "serde_with",
  "serde_yaml",
  "sha2 0.10.2",
+ "sha3 0.10.1",
  "smallvec",
  "smpl_jwt",
  "snafu",
@@ -8973,7 +8984,7 @@ dependencies = [
  "serde_json",
  "sha-1 0.10.0",
  "sha2 0.9.8",
- "sha3",
+ "sha3 0.9.1",
  "strip-ansi-escapes",
  "syslog_loose",
  "tracing 0.1.32",

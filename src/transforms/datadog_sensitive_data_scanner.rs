@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use regex::Regex;
+use bytes::Bytes;
+use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
+use vrl::value::Value;
 
 use crate::conditions::ConditionConfig;
 use crate::{
@@ -11,6 +13,7 @@ use crate::{
     schema,
     transforms::{FunctionTransform, OutputBuffer, Transform},
 };
+use sha_3::{Digest, Sha3_256};
 
 #[derive(Debug, Clone)]
 struct ScanningGroup {
@@ -40,7 +43,52 @@ struct ScanningRule {
 
 impl ScanningRule {
     fn scan(&self, event: &mut Event) {
-        todo!();
+        match event {
+            Event::Log(log) => {
+                match &self.coverage {
+                    ScanningCoverage::Include(attributes) => {
+                        for attribute in attributes {
+                            if let Some(value) = log.get_mut(attribute.as_str()) {
+                                self.scan_nested(value);
+                            }
+                        }
+                    }
+                    ScanningCoverage::Exclude(_) => {} // TODO
+                }
+            }
+            _ => unimplemented!("Only log events can be scanned"),
+        }
+    }
+
+    fn scan_nested(&self, value: &mut Value) {
+        let mut values = vec![value];
+
+        while let Some(value) = values.pop() {
+            match value {
+                Value::Bytes(val) => {
+                    let mut content = std::str::from_utf8(val).unwrap();
+                    let new_content = match &self.action {
+                        Action::Scrub(replacement) => {
+                            debug!("scrubbed with {:?}", replacement);
+                            self.pattern.replace_all(content, replacement)
+                        }
+                        Action::Hash => {
+                            debug!("hashed");
+                            self.pattern.replace_all(content, |captures: &Captures| {
+                                hex::encode(Sha3_256::digest(
+                                    captures.get(1).map_or("", |m| m.as_str()).to_string(),
+                                ))
+                            })
+                        }
+                    };
+                    let replacement = new_content.into_owned();
+                    *val = Bytes::from(replacement);
+                }
+                Value::Object(val) => values.extend(val.values_mut()),
+                Value::Array(val) => values.extend(val.iter_mut()),
+                _ => continue,
+            }
+        }
     }
 }
 
@@ -85,11 +133,14 @@ impl TransformConfig for DatadogSensitiveDataScannerConfig {
 
         let stripe_api_rule = ScanningRule {
             id: "stripe rule".to_string(),
-            pattern: Regex::new(r"").unwrap(),
+            pattern: Regex::new(r"hello").unwrap(),
             coverage: ScanningCoverage::Include(vec!["message".to_string()]),
             tags: build_tags("sensitive_data_category:credentials,sensitive_data:stripe_api_key"),
-            action: Action::Scrub("REDACT".to_string()),
+            // action: Action::Scrub("REDACT".to_string()),
+            action: Action::Hash,
         };
+
+        let scanning_rules = vec![amex_rule, stripe_api_rule];
 
         let group = ScanningGroup {
             id: "group1".to_string(),
@@ -98,10 +149,9 @@ impl TransformConfig for DatadogSensitiveDataScannerConfig {
             }
             .build(&Default::default())
             .unwrap(),
-            scanning_rules: Vec::new(),
+            scanning_rules,
         };
 
-        // todo: wire up scanning rules to run in transform()
         Ok(Transform::function(DatadogSensitiveDataScanner {
             groups: vec![group],
         }))
