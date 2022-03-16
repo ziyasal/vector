@@ -1,6 +1,6 @@
-# Datadog Agent -> SDS -> Datadog Logs
+# HTTP -> SDS -> Datadog Logs
 
-This soak tests Datadog agent source feeding into the Datadog logs source. SDS
+This soak tests HTTP source feeding into the Datadog logs source. SDS
 is included.
 
 ## Method
