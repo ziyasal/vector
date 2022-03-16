@@ -55,7 +55,8 @@ module "http-blackhole" {
 module "http-gen" {
   source        = "../../../common/terraform/modules/lading_http_gen"
   type          = var.type
-  http-gen-yaml = file("${path.module}/../../../common/configs/http_gen_datadog_source_sensitive.yaml")
+  http-gen-yaml = file("${path.module}/http_gen.yaml")
+  http-gen-static-bootstrap = file("${path.module}/data/bootstrap.log")
   namespace     = kubernetes_namespace.soak.metadata[0].name
   lading_image  = var.lading_image
   depends_on    = [module.vector]
