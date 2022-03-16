@@ -62,7 +62,6 @@ impl ScanningRule {
                 }
                 ScanningCoverage::Exclude(attributes) => {
                     let mut inserted_tags = false;
-                    println!("{:?}", log.keys().collect::<Vec<_>>());
                     let lookups = log
                         .keys()
                         .filter(|k| !attributes.iter().any(|attribute| k.starts_with(attribute)))
@@ -389,6 +388,60 @@ mod test {
 
         let event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "hello", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "message": "hello" }"#).unwrap());
         let scanned_event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "REDACTED", "match": { "here": "REDACTED world" } }, "boolean": true, "number": 47.5, "message": "REDACTED", "test": "tag" }"#).unwrap());
+
+        let result = transform_one(&mut scanner, event).unwrap();
+        assert_eq!(scanned_event, result);
+    }
+
+    #[test]
+    fn filter_matched() {
+        let rule = ScanningRule {
+            id: "foo".to_string(),
+            pattern: Regex::new(r"hello").unwrap(),
+            coverage: ScanningCoverage::Exclude(vec![]),
+            tags: build_tags("test:tag"),
+            action: Action::Scrub("REDACTED".to_string()),
+        };
+
+        let scanning_rules = vec![rule];
+
+        let scanning_groups = vec![ScanningGroup {
+            id: "group".to_string(),
+            filter: build_filter(r#"@match.here:"hello world""#),
+            scanning_rules,
+        }];
+
+        let mut scanner = DatadogSensitiveDataScanner::new(scanning_groups);
+
+        let event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "custom": { "nope": 1, "nada": "hello", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "message": "hello" }"#).unwrap());
+        let scanned_event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "custom": { "nope": 1, "nada": "REDACTED", "match": { "here": "REDACTED world" } }, "boolean": true, "number": 47.5, "message": "REDACTED", "test": "tag" }"#).unwrap());
+
+        let result = transform_one(&mut scanner, event).unwrap();
+        assert_eq!(scanned_event, result);
+    }
+
+    #[test]
+    fn filter_not_matched() {
+        let rule = ScanningRule {
+            id: "foo".to_string(),
+            pattern: Regex::new(r"hello").unwrap(),
+            coverage: ScanningCoverage::Exclude(vec![]),
+            tags: build_tags("test:tag"),
+            action: Action::Scrub("REDACTED".to_string()),
+        };
+
+        let scanning_rules = vec![rule];
+
+        let scanning_groups = vec![ScanningGroup {
+            id: "group".to_string(),
+            filter: build_filter(r#"@match.here:"goodbye""#),
+            scanning_rules,
+        }];
+
+        let mut scanner = DatadogSensitiveDataScanner::new(scanning_groups);
+
+        let event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "custom": { "nope": 1, "nada": "hello", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "message": "hello" }"#).unwrap());
+        let scanned_event = event.clone();
 
         let result = transform_one(&mut scanner, event).unwrap();
         assert_eq!(scanned_event, result);
