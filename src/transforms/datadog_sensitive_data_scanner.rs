@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
+use vector_core::event::LogEvent;
 use vrl::value::Value;
 
 use crate::conditions::ConditionConfig;
@@ -24,6 +25,7 @@ struct ScanningGroup {
 
 impl ScanningGroup {
     fn scan(&self, event: &mut Event) {
+        trace!("Running scanning group: {:?}", self.id);
         if self.filter.check(event) {
             for rule in &self.scanning_rules {
                 rule.scan(event);
@@ -43,30 +45,32 @@ struct ScanningRule {
 
 impl ScanningRule {
     fn scan(&self, event: &mut Event) {
+        trace!("Running scanning rule: {:?}", self.id);
         match event {
-            Event::Log(log) => {
-                match &self.coverage {
-                    ScanningCoverage::Include(attributes) => {
-                        for attribute in attributes {
-                            if let Some(value) = log.get_mut(attribute.as_str()) {
-                                self.scan_nested(value);
+            Event::Log(log) => match &self.coverage {
+                ScanningCoverage::Include(attributes) => {
+                    for attribute in attributes {
+                        if let Some(value) = log.get_mut(attribute.as_str()) {
+                            if self.scan_nested(value) {
+                                self.insert_tags(log);
                             }
                         }
                     }
-                    ScanningCoverage::Exclude(_) => {} // TODO
                 }
-            }
+                ScanningCoverage::Exclude(attributes) => {}
+            },
             _ => unimplemented!("Only log events can be scanned"),
         }
     }
 
-    fn scan_nested(&self, value: &mut Value) {
+    fn scan_nested(&self, value: &mut Value) -> bool {
         let mut values = vec![value];
+        let mut matched = false;
 
         while let Some(value) = values.pop() {
             match value {
                 Value::Bytes(val) => {
-                    let mut content = std::str::from_utf8(val).unwrap();
+                    let content = std::str::from_utf8(val).unwrap();
                     let new_content = match &self.action {
                         Action::Scrub(replacement) => {
                             debug!("scrubbed with {:?}", replacement);
@@ -81,6 +85,12 @@ impl ScanningRule {
                             })
                         }
                     };
+
+                    // Set matched to true if a pattern has matched
+                    if let std::borrow::Cow::Owned(_) = new_content {
+                        matched = true;
+                    }
+
                     let replacement = new_content.into_owned();
                     *val = Bytes::from(replacement);
                 }
@@ -88,6 +98,13 @@ impl ScanningRule {
                 Value::Array(val) => values.extend(val.iter_mut()),
                 _ => continue,
             }
+        }
+        matched
+    }
+
+    fn insert_tags(&self, event: &mut LogEvent) {
+        for (key, value) in self.tags.iter() {
+            event.insert(key.as_str(), value.clone());
         }
     }
 }
@@ -112,9 +129,19 @@ fn build_tags(tags: &'static str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for tag in tags.split(",") {
         let pieces = tag.split(":").collect::<Vec<_>>();
-        map.insert(pieces[0].to_string(), pieces[1].to_string());
+        if pieces.len() >= 2 {
+            map.insert(pieces[0].to_string(), pieces[1].to_string());
+        }
     }
     map
+}
+
+fn build_filter(s: &'static str) -> Condition {
+    DatadogSearchConfig {
+        source: s.to_string(),
+    }
+    .build(&Default::default())
+    .unwrap()
 }
 
 #[async_trait::async_trait]
@@ -144,17 +171,13 @@ impl TransformConfig for DatadogSensitiveDataScannerConfig {
 
         let group = ScanningGroup {
             id: "group1".to_string(),
-            filter: DatadogSearchConfig {
-                source: "*".to_string(),
-            }
-            .build(&Default::default())
-            .unwrap(),
+            filter: build_filter("*"),
             scanning_rules,
         };
 
-        Ok(Transform::function(DatadogSensitiveDataScanner {
-            groups: vec![group],
-        }))
+        Ok(Transform::function(DatadogSensitiveDataScanner::new(vec![
+            group,
+        ])))
     }
 
     fn input(&self) -> Input {
@@ -180,11 +203,122 @@ pub struct DatadogSensitiveDataScanner {
     groups: Vec<ScanningGroup>,
 }
 
+impl DatadogSensitiveDataScanner {
+    fn new(groups: Vec<ScanningGroup>) -> Self {
+        Self { groups }
+    }
+}
+
 impl FunctionTransform for DatadogSensitiveDataScanner {
     fn transform(&mut self, output: &mut OutputBuffer, mut event: Event) {
         for group in &self.groups {
             group.scan(&mut event);
         }
         output.push(event);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{event::Event, transforms::test::transform_one};
+
+    #[test]
+    fn hash_includes_simple() {
+        let rule = ScanningRule {
+            id: "foo".to_string(),
+            pattern: Regex::new(r"hello").unwrap(),
+            coverage: ScanningCoverage::Include(vec!["message".to_string()]),
+            tags: build_tags("sensitive_data_category:credentials,sensitive_data:api_key"),
+            action: Action::Hash,
+        };
+
+        let scanning_rules = vec![rule];
+
+        let scanning_groups = vec![ScanningGroup {
+            id: "group".to_string(),
+            filter: build_filter("*"),
+            scanning_rules,
+        }];
+
+        let mut scanner = DatadogSensitiveDataScanner::new(scanning_groups);
+        let event = Event::from("hello world");
+
+        let mut result = transform_one(&mut scanner, event).unwrap().into_log();
+        assert_eq!(
+            Value::from("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a world"),
+            result.remove("message").unwrap()
+        );
+        assert_eq!(
+            Value::from("credentials"),
+            result.remove("sensitive_data_category").unwrap()
+        );
+        assert_eq!(
+            Value::from("api_key"),
+            result.remove("sensitive_data").unwrap()
+        );
+    }
+
+    #[test]
+    fn scrub_includes_simple() {
+        let rule = ScanningRule {
+            id: "foo".to_string(),
+            pattern: Regex::new(r"hello").unwrap(),
+            coverage: ScanningCoverage::Include(vec!["message".to_string()]),
+            tags: build_tags("sensitive_data_category:credentials,sensitive_data:api_key"),
+            action: Action::Scrub("REDACTED".to_string()),
+        };
+
+        let scanning_rules = vec![rule];
+
+        let scanning_groups = vec![ScanningGroup {
+            id: "group".to_string(),
+            filter: build_filter("*"),
+            scanning_rules,
+        }];
+
+        let mut scanner = DatadogSensitiveDataScanner::new(scanning_groups);
+        let event = Event::from("hello world");
+
+        let mut result = transform_one(&mut scanner, event).unwrap().into_log();
+        assert_eq!(
+            Value::from("REDACTED world"),
+            result.remove("message").unwrap()
+        );
+        assert_eq!(
+            Value::from("credentials"),
+            result.remove("sensitive_data_category").unwrap()
+        );
+        assert_eq!(
+            Value::from("api_key"),
+            result.remove("sensitive_data").unwrap()
+        );
+    }
+
+    #[test]
+    fn scrub_includes_nested() {
+        let rule = ScanningRule {
+            id: "foo".to_string(),
+            pattern: Regex::new(r"hello").unwrap(),
+            coverage: ScanningCoverage::Include(vec!["namespace".to_string()]),
+            tags: build_tags(""),
+            action: Action::Scrub("REDACTED".to_string()),
+        };
+
+        let scanning_rules = vec![rule];
+
+        let scanning_groups = vec![ScanningGroup {
+            id: "group".to_string(),
+            filter: build_filter("*"),
+            scanning_rules,
+        }];
+
+        let mut scanner = DatadogSensitiveDataScanner::new(scanning_groups);
+
+        let event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "goodbye", "match": { "here": "hello world" } }, "boolean": true, "number": 47.5, "object": { "key": "value" }, "string": "bar" }"#).unwrap());
+        let scanned_event = Event::from(serde_json::from_str::<HashMap<_, _>>(r#"{ "namespace": { "nope": 1, "nada": "goodbye", "match": { "here": "REDACTED world" } }, "boolean": true, "number": 47.5, "object": { "key": "value" }, "string": "bar" }"#).unwrap());
+
+        let result = transform_one(&mut scanner, event).unwrap();
+        assert_eq!(scanned_event, result);
     }
 }
