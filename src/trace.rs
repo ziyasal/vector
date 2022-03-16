@@ -31,9 +31,15 @@ fn metrics_layer_enabled() -> bool {
 
 pub fn init(color: bool, json: bool, levels: &str) {
     let _ = BUFFER.set(Mutex::new(Some(Vec::new())));
+    let fmt_filter = tracing_subscriber::filter::Targets::from_str(levels).expect(
+        "logging filter targets were not formatted correctly or did not specify a valid level",
+    );
 
-    let subscriber =
-        tracing_subscriber::registry().with(metrics_layer_enabled().then(|| MetricsLayer::new()));
+    let metrics_layer = metrics_layer_enabled().then(|| {
+        MetricsLayer::new().with_filter(tracing_subscriber::filter::LevelFilter::INFO)
+    });
+
+    let subscriber = tracing_subscriber::registry().with(metrics_layer);
 
     #[cfg(feature = "tokio-console")]
     let subscriber = {
@@ -44,18 +50,14 @@ pub fn init(color: bool, json: bool, levels: &str) {
         subscriber.with(console_layer)
     };
 
-    let fmt_filter = tracing_subscriber::filter::Targets::from_str(levels).expect(
-        "logging filter targets were not formatted correctly or did not specify a valid level",
-    );
-
-    println!("targets: {:?}", fmt_filter);
     if json {
         let formatter = tracing_subscriber::fmt::layer().json().flatten_event(true);
 
         #[cfg(test)]
         let formatter = formatter.with_test_writer();
 
-        let subscriber = subscriber.with(RateLimitedLayer::new(formatter.with_filter(fmt_filter)));
+        let rate_limited = RateLimitedLayer::new(formatter);
+        let subscriber = subscriber.with(rate_limited.with_filter(fmt_filter));
 
         let subscriber = BroadcastSubscriber { subscriber };
         subscriber.init()
@@ -67,7 +69,8 @@ pub fn init(color: bool, json: bool, levels: &str) {
         #[cfg(test)]
         let formatter = formatter.with_test_writer();
 
-        let subscriber = subscriber.with(RateLimitedLayer::new(formatter.with_filter(fmt_filter)));
+        let rate_limited = RateLimitedLayer::new(formatter);
+        let subscriber = subscriber.with(rate_limited.with_filter(fmt_filter));
 
         let subscriber = BroadcastSubscriber { subscriber };
         subscriber.init()

@@ -80,9 +80,7 @@ impl PollSemaphore {
         };
 
         let result = ready!(permit_future.poll(cx));
-
-        let next_fut = Arc::clone(&self.semaphore).acquire_many_owned(n);
-        permit_future.set(next_fut);
+        self.permit_fut = None;
 
         match result {
             Ok(permit) => Poll::Ready(Some(permit)),

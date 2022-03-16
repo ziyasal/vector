@@ -276,8 +276,6 @@ impl<T: Bufferable> Sink<T> for BufferSender<T> {
             },
         };
 
-        //info!("poll_ready: next={:?}, ret={:?}", next_state, result);
-
         *this.state = next_state;
         result
     }
@@ -340,8 +338,6 @@ impl<T: Bufferable> Sink<T> for BufferSender<T> {
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-
-        //info!("poll_flush: base_flush={:?}", this.base_flush);
 
         if *this.base_flush {
             ready!(this.base.poll_flush(cx))?;
