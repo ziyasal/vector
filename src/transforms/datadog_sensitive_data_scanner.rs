@@ -167,7 +167,7 @@ fn build_filter(s: &'static str) -> Condition {
 impl TransformConfig for DatadogSensitiveDataScannerConfig {
     async fn build(&self, _context: &TransformContext) -> crate::Result<Transform> {
         let amex_rule = ScanningRule {
-            id: "amex rule".to_string(),
+            id: "card rule".to_string(),
             pattern: Regex::new(r"").unwrap(),
             coverage: ScanningCoverage::Exclude(Vec::new()), // match entire event
             tags: build_tags(
@@ -177,9 +177,9 @@ impl TransformConfig for DatadogSensitiveDataScannerConfig {
         };
 
         let stripe_api_rule = ScanningRule {
-            id: "stripe rule".to_string(),
-            pattern: Regex::new(r"hello").unwrap(),
-            coverage: ScanningCoverage::Include(vec!["message".to_string()]),
+            id: "api key rule".to_string(),
+            pattern: Regex::new(r"").unwrap(),
+            coverage: ScanningCoverage::Exclude(Vec::new()), // match entire event
             tags: build_tags("sensitive_data_category:credentials,sensitive_data:stripe_api_key"),
             action: Action::Scrub("REDACT".to_string()),
         };
