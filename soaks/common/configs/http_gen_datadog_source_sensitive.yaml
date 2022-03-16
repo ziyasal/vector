@@ -11,7 +11,7 @@ targets:
     parallel_connections: 10
     method:
       post:
+        maximum_prebuild_cache_size_bytes: "256 Mb"
         variant:
           static:
-            static_path: "/captures/sensitive.log"
-        maximum_prebuild_cache_size_bytes: "256 Mb"
+            static_path: "/data/bootstrap.log"

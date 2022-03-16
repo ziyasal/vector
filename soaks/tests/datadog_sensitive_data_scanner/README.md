@@ -1,7 +1,7 @@
-# Datadog Agent -> Remap -> Datadog Logs
+# Datadog Agent -> SDS -> Datadog Logs
 
-This soak tests Datadog agent source feeding into the Datadog logs source
-through a simplistic remap transform. It is a straight pipe.
+This soak tests Datadog agent source feeding into the Datadog logs source. SDS
+is included.
 
 ## Method
 
