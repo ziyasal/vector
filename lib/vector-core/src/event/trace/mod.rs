@@ -1,6 +1,10 @@
-use serde::{Deserialize, Serialize};
+mod metadata;
+mod span;
+
 use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
+use serde::{Deserialize, Serialize};
+pub use span::Span;
 use vector_buffers::EventCount;
 use vector_common::EventDataEq;
 
@@ -10,7 +14,21 @@ use super::{
 };
 use crate::ByteSizeOf;
 
-/// Traces are a newtype of `LogEvent`
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize)]
+pub struct TraceId(pub(crate) u128);
+
+/// Traces are essentially a list of Spans with some metadata. The following structure is inspired by
+/// the TracesData protobuf message: https://github.com/open-telemetry/opentelemetry-proto/blob/17c68a9/opentelemetry/proto/trace/v1/trace.proto#L27-L44
+/// that is explicitely designed for general use outside of the OTLP protocol. But this struct will represent a single
+/// trace.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize)]
+pub struct OtlmTraceEvent {
+    spans: Vec<Span>,
+    id: TraceId,
+    // "resource = top level k/v for a trace
+    // resource: Option<Metadata>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize)]
 pub struct TraceEvent(LogEvent);
 

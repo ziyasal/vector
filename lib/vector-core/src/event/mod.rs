@@ -40,7 +40,7 @@ mod r#ref;
 mod ser;
 #[cfg(test)]
 mod test;
-mod trace;
+pub mod trace;
 pub mod util;
 #[cfg(feature = "vrl")]
 mod vrl_target;
