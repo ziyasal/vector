@@ -20,10 +20,13 @@ impl InternalEvent for KubernetesLogsEventsReceived<'_> {
             file = %self.file,
         );
         match self.pod_name {
-            Some(name) => {
-                counter!("component_received_events_total", 1, "pod_name" => name.to_owned());
-                counter!("component_received_event_bytes_total", self.byte_size as u64, "pod_name" => name.to_owned());
-                counter!("events_in_total", 1, "pod_name" => name.to_owned());
+            Some(_) => {
+                counter!("component_received_events_total", 1);
+                counter!(
+                    "component_received_event_bytes_total",
+                    self.byte_size as u64
+                );
+                counter!("events_in_total", 1);
             }
             None => {
                 counter!("component_received_events_total", 1);
