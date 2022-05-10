@@ -71,21 +71,9 @@ impl Expression for Predicate {
         self.inner.resolve(ctx)
     }
 
+    #[inline(always)]
     fn type_def(&self, state: (&LocalEnv, &ExternalEnv)) -> TypeDef {
-        let mut type_defs = self
-            .inner
-            .iter()
-            .map(|expr| expr.type_def(state))
-            .collect::<Vec<_>>();
-
-        // If any of the stored expressions is fallible, the entire predicate is
-        // fallible.
-        let fallible = type_defs.iter().any(TypeDef::is_fallible);
-
-        // The last expression determines the resulting value of the predicate.
-        let type_def = type_defs.pop().unwrap_or_else(TypeDef::boolean);
-
-        type_def.with_fallibility(fallible)
+        self.inner.type_def(state)
     }
 
     fn compile_to_vm(
