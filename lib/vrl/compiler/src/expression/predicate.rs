@@ -4,7 +4,7 @@ use diagnostic::{DiagnosticMessage, Label, Note, Urls};
 
 use crate::{
     compiler::Diagnostics,
-    expression::{Expr, Resolved},
+    expression::{Block, Expr, Resolved},
     parser::Node,
     state::{ExternalEnv, LocalEnv},
     value::Kind,
@@ -15,17 +15,17 @@ pub(crate) type Result = std::result::Result<Predicate, Error>;
 
 #[derive(Clone, PartialEq)]
 pub struct Predicate {
-    inner: Vec<Expr>,
+    inner: Block,
 }
 
 impl Predicate {
     pub fn new(
-        node: Node<Vec<Expr>>,
+        block: Node<Block>,
         state: (&LocalEnv, &ExternalEnv),
         warnings: &mut Diagnostics,
     ) -> Result {
-        let (span, exprs) = node.take();
-        let (type_def, value) = exprs
+        let (span, block) = block.take();
+        let (type_def, value) = block
             .last()
             .map(|expr| (expr.type_def(state), expr.as_value()))
             .unwrap_or_else(|| (TypeDef::null(), None));
@@ -56,21 +56,19 @@ impl Predicate {
             });
         }
 
-        Ok(Self { inner: exprs })
+        Ok(Self { inner: block })
     }
 
     pub fn new_unchecked(inner: Vec<Expr>) -> Self {
+        let inner = Block::new(inner, LocalEnv::default());
         Self { inner }
     }
 }
 
 impl Expression for Predicate {
+    #[inline(always)]
     fn resolve(&self, ctx: &mut Context) -> Resolved {
-        self.inner
-            .iter()
-            .map(|expr| expr.resolve(ctx))
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map(|mut v| v.pop().unwrap_or(Value::Boolean(false)))
+        self.inner.resolve(ctx)
     }
 
     fn type_def(&self, state: (&LocalEnv, &ExternalEnv)) -> TypeDef {
@@ -97,7 +95,7 @@ impl Expression for Predicate {
     ) -> std::result::Result<(), String> {
         let (local, external) = state;
 
-        for inner in &self.inner {
+        for inner in self.inner.iter() {
             inner.compile_to_vm(vm, (local, external))?;
         }
         Ok(())

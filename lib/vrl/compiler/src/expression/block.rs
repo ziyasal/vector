@@ -19,6 +19,14 @@ pub struct Block {
     local_env: LocalEnv,
 }
 
+impl std::ops::Deref for Block {
+    type Target = [Expr];
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 impl Block {
     pub fn new(inner: Vec<Expr>, local_env: LocalEnv) -> Self {
         Self { inner, local_env }

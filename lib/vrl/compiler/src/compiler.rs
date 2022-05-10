@@ -308,15 +308,17 @@ impl<'a> Compiler<'a> {
     ) -> predicate::Result {
         use ast::Predicate::*;
 
-        let (span, predicate) = node.take();
-
-        let exprs = match predicate {
-            One(node) => vec![self.compile_expr(*node, external)],
-            Many(nodes) => self.compile_exprs(nodes, external),
-        };
+        let span = node.span();
+        let block = self.compile_block(
+            node.map(|predicate| match predicate {
+                One(node) => ast::Block(vec![*node]),
+                Many(nodes) => ast::Block(nodes),
+            }),
+            external,
+        );
 
         Predicate::new(
-            Node::new(span, exprs),
+            Node::new(span, block),
             (&self.local, external),
             &mut self.diagnostics,
         )
