@@ -148,18 +148,6 @@ pub(crate) enum Error {
     },
 }
 
-// impl fmt::Display for Error {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "{:#}", self)
-//     }
-// }
-
-// impl std::error::Error for Error {
-//     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-//         Some(&self.variant)
-//     }
-// }
-
 impl DiagnosticMessage for Error {
     fn code(&self) -> usize {
         use Error::*;
