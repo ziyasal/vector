@@ -1299,7 +1299,13 @@ mod tests {
             None,
         )
         .unwrap()
-        .compile(&mut local, &mut external, None, LocalEnv::default())
+        .compile(
+            &mut local,
+            &mut external,
+            None,
+            LocalEnv::default(),
+            &mut None,
+        )
         .unwrap()
     }
 
