@@ -1,22 +1,26 @@
 use std::{
     fmt,
-    task::{Context, Poll},
+    future::Future,
+    task::{Context, Poll}, pin::Pin, io,
 };
 
-use futures::future::BoxFuture;
+use futures::{future::BoxFuture, ready};
 use headers::{Authorization, HeaderMapExt};
 use http::{header::HeaderValue, request::Builder, uri::InvalidUri, HeaderMap, Request, Uri};
 use hyper::{
     body::{Body, HttpBody},
-    client,
+    client::{self, connect::Connection},
     client::{Client, HttpConnector},
 };
 use hyper_openssl::HttpsConnector;
 use hyper_proxy::ProxyConnector;
+use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tower::Service;
 use tracing::Instrument;
+use vector_common::internal_event::{NetworkBytesReceived, NetworkOutgoingConnectionEstablished, NetworkBytesSent};
 
 use crate::{
     config::ProxyConfig,
@@ -142,8 +146,10 @@ pub fn build_tls_connector(
     let mut http = HttpConnector::new();
     http.enforce_http(false);
 
+    let tracked_http = TrackedConnector::new(http);
+
     let tls = tls_connector_builder(&tls_settings).context(BuildTlsConnectorSnafu)?;
-    let mut https = HttpsConnector::with_connector(http, tls).context(MakeHttpsConnectorSnafu)?;
+    let mut https = HttpsConnector::with_connector(tracked_http, tls).context(MakeHttpsConnectorSnafu)?;
 
     let settings = tls_settings.tls().cloned();
     https.set_callback(move |c, _uri| {
@@ -253,6 +259,124 @@ impl Auth {
                 Err(error) => error!(message = "Invalid bearer token.", token = %token, %error),
             },
         }
+    }
+}
+
+#[derive(Clone)]
+struct TrackedConnector<S> {
+    inner: S,
+}
+
+impl<S> TrackedConnector<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner
+        }
+    }
+}
+
+impl<S, T> Service<Uri> for TrackedConnector<S>
+where
+    S: Service<Uri, Response = T> + Send,
+    S::Future: Send + 'static,
+    T: AsyncRead + AsyncWrite + Connection + Unpin,
+{
+    type Response = TrackedStream<T>;
+    type Error = S::Error;
+
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Uri) -> Self::Future {
+        let protocol = get_http_scheme_from_uri(&req);
+        let inner = self.inner.call(req);
+
+        Box::pin(async move {
+            inner.await.map(|stream| {
+                emit!(NetworkOutgoingConnectionEstablished {
+                    protocol,
+                });
+
+                TrackedStream::new(protocol, stream)
+            })
+        })
+    }
+}
+#[pin_project]
+struct TrackedStream<T> {
+    protocol: &'static str,
+    #[pin]
+    inner: T,
+}
+
+impl<T> TrackedStream<T> {
+    fn new(protocol: &'static str, inner: T) -> Self {
+        Self {
+            protocol,
+            inner
+        }
+    }
+}
+
+impl<T> AsyncRead for TrackedStream<T>
+where
+    T: AsyncRead,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.project();
+
+        let start = buf.filled().len();
+        let result = ready!(this.inner.poll_read(cx, buf));
+        let delta = buf.filled().len() - start;
+
+        if delta > 0 {
+            emit!(NetworkBytesReceived {
+                byte_size: delta,
+                protocol: this.protocol,
+            });
+        }
+
+        Poll::Ready(result)
+    }
+}
+
+impl<T> AsyncWrite for TrackedStream<T>
+where
+    T: AsyncWrite,
+{
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        let this = self.project();
+        let result = ready!(this.inner.poll_write(cx, buf));
+
+        if let Ok(n) = &result {
+            emit!(NetworkBytesSent {
+                byte_size: *n,
+                protocol: this.protocol,
+            });
+        }
+
+        Poll::Ready(result)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        let this = self.project();
+        this.inner.poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        let this = self.project();
+        this.inner.poll_shutdown(cx)
     }
 }
 

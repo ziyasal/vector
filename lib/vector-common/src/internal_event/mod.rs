@@ -1,10 +1,12 @@
 mod bytes_sent;
 mod events_received;
 mod events_sent;
+mod network;
 
 pub use bytes_sent::BytesSent;
 pub use events_received::{EventsReceived, OldEventsReceived};
 pub use events_sent::{EventsSent, DEFAULT_OUTPUT};
+pub use network::*;
 
 pub trait InternalEvent: Sized {
     fn emit(self) {}
